@@ -29,7 +29,7 @@ FIRE_RED_DIR = MODELS_DIR / "sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25
 
 # ── 运行配置 ──────────────────────────────────────────────────────
 MODEL_TYPE = "sense_voice"  # 可选: "sense_voice" / "paraformer" / "fire_red"
-NUM_THREADS = 2             # 手机端建议 2，高端机可改 4
+NUM_THREADS = 4             # Snapdragon 8 Gen 1 用 4（4 大核）；低端机改 2
 
 # ── 模型下载地址 ──────────────────────────────────────────────────
 _MODEL_URLS = {
