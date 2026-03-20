@@ -16,8 +16,8 @@ This is a demo project for learning purposes only.
 Download the archive and unarchive the files:
 
 ```bash
-wget -O Bili_Note-alpha.tar.gz https://codeload.github.com/MapleHe/Bili_Note/tar.gz/refs/tags/alpha
-tar -zxf Bili_Note-alpha && mv Bili_Note-alpha Bili_Note && rm Bili_Note-alpha.tar.gz
+wget -O Bili_Notes-alpha.tar.gz https://codeload.github.com/MapleHe/Bili_Notes/tar.gz/refs/tags/alpha
+tar -zxf Bili_Notes-alpha && mv Bili_Notes-alpha Bili_Notes && rm Bili_Notes-alpha.tar.gz
 ```
 
 OR use git clone:
@@ -29,7 +29,7 @@ git clone https://github.com/MapleHe/Bili_Notes.git
 ## Usage
 
 ```bash
-cd Bili_Note/
+cd Bili_Notes/
 chmod u+x ./start_server.sh
 ./start_server.sh
 ```
