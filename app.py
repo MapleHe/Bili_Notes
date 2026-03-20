@@ -3,11 +3,13 @@ a2doc Flask web application.
 Bilibili audio downloader and transcriber with LLM completion and summarisation.
 """
 
+import atexit
 import json
 import os
 import queue
 import random
 import shutil
+import signal
 import sys
 import threading
 import time
@@ -32,7 +34,7 @@ DATA_USERDATA.mkdir(parents=True, exist_ok=True)
 # Lazy imports from src/utils (they may have heavy deps like sherpa-onnx)
 # ---------------------------------------------------------------------------
 from src.utils.extract_url import download_bilibili_wav  # noqa: E402
-from src.utils.asr import transcribe_audio  # noqa: E402
+from src.utils.asr import ensure_model, load_recognizer, transcribe as asr_transcribe, MODEL_TYPE  # noqa: E402
 from src.utils.llm import complete_transcription, summarize_text, PROVIDERS  # noqa: E402
 from src.utils.merge import merge_files, find_userdata_files  # noqa: E402
 
@@ -42,22 +44,74 @@ from src.utils.merge import merge_files, find_userdata_files  # noqa: E402
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
+# ASR model preloading
+# ---------------------------------------------------------------------------
+_recognizer = None
+_model_ready = threading.Event()
+
+def _load_model():
+    global _recognizer
+    try:
+        ensure_model(MODEL_TYPE)
+        _recognizer = load_recognizer(MODEL_TYPE)
+        print("[ASR] 模型就绪")
+    except Exception as exc:
+        print(f"[ASR] 模型加载失败: {exc}")
+    finally:
+        _model_ready.set()
+
+def _release_model():
+    global _recognizer
+    _recognizer = None
+
+atexit.register(_release_model)
+signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
+threading.Thread(target=_load_model, daemon=True).start()
+
+# ---------------------------------------------------------------------------
 # Processing state (module-level singletons)
 # ---------------------------------------------------------------------------
-status_messages: list[dict] = []          # accumulated SSE message dicts
+status_messages: list[dict] = []
 _status_lock = threading.Lock()
-processing_lock = threading.Lock()
-is_processing = False
+_process_lock = threading.Lock()
+_is_processing = False
+_requested_bvids: list[str] = []
 
+DEFAULT_SUMMARY_PROMPT = "请用中文总结这段视频的主要内容，列出关键观点和结论。"
 
 def _emit(msg_type: str, text: str) -> None:
     """Append a status message visible to the SSE endpoint."""
     with _status_lock:
         status_messages.append({"type": msg_type, "text": text})
 
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+def _check_existing(bvid: str) -> dict:
+    """Return existing transcript/summary paths for bvid, or None."""
+    transcripts = sorted(DATA_USERDATA.glob(f"{bvid}-*-transcript.txt"))
+    summaries = sorted(DATA_USERDATA.glob(f"{bvid}-*-summary.txt"))
+    return {
+        "transcript": transcripts[0] if transcripts else None,
+        "summary": summaries[0] if summaries else None,
+    }
+
+def _merged_content(suffix: str) -> tuple[str, list[str]]:
+    """Return merged content and list of missing BVIDs."""
+    paths = find_userdata_files(str(DATA_USERDATA), suffix)
+    if not paths:
+        return "", []
+    done_bvids = {Path(p).name.split("-")[0] for p in paths}
+    missing = [b for b in _requested_bvids if b not in done_bvids]
+    content = merge_files(paths)
+    if missing:
+        note = "# 注意：以下 BV ID 尚未完成：" + "、".join(missing) + "\n\n---\n\n"
+        content = note + content
+    return content, missing
 
 # ---------------------------------------------------------------------------
-# Background processing thread
+# Background processing pipeline
 # ---------------------------------------------------------------------------
 
 def _processing_worker(
@@ -68,82 +122,113 @@ def _processing_worker(
     summary_prompt: str,
     cookie: str,
 ) -> None:
-    global is_processing
+    global _is_processing
     try:
-        for idx, bvid in enumerate(bvids):
-            # Random delay between videos (not before the first one)
-            if idx > 0:
-                delay = random.randint(20, 60)
-                _emit("info", f"等待 {delay} 秒后处理下一个视频…")
-                time.sleep(delay)
+        prompt = summary_prompt.strip() or DEFAULT_SUMMARY_PROMPT
+        pipe = queue.Queue(maxsize=1)
+        _DONE = object()
 
-            try:
-                # ── 1. Download ──────────────────────────────────────────
-                _emit("info", f"正在下载 {bvid}…")
-                dl_result = download_bilibili_wav(
-                    bvid=bvid,
-                    output_dir=str(DATA_TEMP),
-                    cookie=cookie or None,
-                    show_progress=False,
-                )
-                wav_path = dl_result["wav_path"]
-                safe_title = dl_result["safe_title"]
-                title = dl_result["title"]
-                _emit("info", f"下载完成：{title}")
+        def downloader():
+            for idx, bvid in enumerate(bvids):
+                if idx > 0:
+                    delay = random.randint(20, 60)
+                    _emit("info", f"等待 {delay} 秒…")
+                    time.sleep(delay)
 
-                # ── 2. Transcribe ────────────────────────────────────────
-                _emit("info", f"正在转录 {bvid}…")
-                raw_text = transcribe_audio(wav_path)
-                _emit("info", f"转录完成，共 {len(raw_text)} 字符")
+                ex = _check_existing(bvid)
+                if ex["transcript"] and ex["summary"]:
+                    _emit("info", f"{bvid}: 已完成，跳过")
+                    pipe.put({"bvid": bvid, "skip_all": True})
+                    continue
 
-                # Remove the WAV after transcription to save space
+                if ex["transcript"]:
+                    _emit("info", f"{bvid}: 文字稿已存在，仅生成摘要")
+                    pipe.put({"bvid": bvid, "wav_path": None, "safe_title": None, "existing": ex})
+                    continue
+
                 try:
-                    Path(wav_path).unlink(missing_ok=True)
-                except OSError:
-                    pass
+                    _emit("info", f"下载 {bvid}…")
+                    r = download_bilibili_wav(bvid, str(DATA_TEMP), cookie or None, False)
+                    ex = _check_existing(bvid)
+                    pipe.put({"bvid": bvid, "wav_path": r["wav_path"], "safe_title": r["safe_title"], "existing": ex})
+                except Exception as e:
+                    _emit("error", f"{bvid} 下载失败: {e}")
+                    pipe.put({"bvid": bvid, "error": True})
 
-                # ── 3. LLM completion (optional) ─────────────────────────
-                if api_key:
-                    _emit("info", f"正在用 LLM 补全文字稿：{bvid}…")
-                    completed_text = complete_transcription(
-                        text=raw_text,
-                        bvid=bvid,
-                        api_key=api_key,
-                        model=model,
-                        base_url=base_url,
-                    )
-                else:
-                    completed_text = f"## BVID: {bvid}\n\n{raw_text}"
+            pipe.put(_DONE)
 
-                transcript_path = DATA_USERDATA / f"{bvid}-{safe_title}-transcript.txt"
-                transcript_path.write_text(completed_text, encoding="utf-8")
-                _emit("info", f"文字稿已保存：{transcript_path.name}")
+        def processor():
+            _model_ready.wait(timeout=300)
+            while True:
+                item = pipe.get()
+                if item is _DONE:
+                    break
 
-                # ── 4. Summarisation (optional) ──────────────────────────
-                if api_key and summary_prompt:
-                    _emit("info", f"正在生成摘要：{bvid}…")
-                    summary = summarize_text(
-                        text=completed_text,
-                        bvid=bvid,
-                        summary_prompt=summary_prompt,
-                        api_key=api_key,
-                        model=model,
-                        base_url=base_url,
-                    )
-                    summary_path = DATA_USERDATA / f"{bvid}-{safe_title}-summary.txt"
-                    summary_path.write_text(summary, encoding="utf-8")
-                    _emit("info", f"摘要已保存：{summary_path.name}")
+                if item.get("skip_all") or item.get("error"):
+                    continue
 
-                _emit("success", f"完成：{bvid} — {title}")
+                bvid = item["bvid"]
+                wav_path = item.get("wav_path")
+                safe_title = item.get("safe_title")
+                ex = item.get("existing", {}) or {}
 
-            except Exception as exc:
-                _emit("error", f"处理 {bvid} 时出错：{exc}")
+                try:
+                    # Determine stem for file naming
+                    if safe_title:
+                        stem = f"{bvid}-{safe_title}"
+                    elif ex.get("transcript"):
+                        stem = ex["transcript"].name.removesuffix("-transcript.txt")
+                    else:
+                        stem = bvid
 
+                    t_path = DATA_USERDATA / f"{stem}-transcript.txt"
+                    s_path = DATA_USERDATA / f"{stem}-summary.txt"
+
+                    # Transcription
+                    if not ex.get("transcript"):
+                        if _recognizer is None:
+                            raise RuntimeError("ASR 模型未就绪")
+                        _emit("info", f"转录 {bvid}…")
+                        raw = asr_transcribe(_recognizer, wav_path)
+                        Path(wav_path).unlink(missing_ok=True)
+
+                        if api_key:
+                            _emit("info", f"LLM 补全 {bvid}…")
+                            completed = complete_transcription(raw, bvid, api_key, model, base_url)
+                        else:
+                            completed = f"## BVID: {bvid}\n\n{raw}"
+
+                        t_path.write_text(completed, encoding="utf-8")
+                        _emit("success", f"{bvid} 文字稿已保存")
+                    else:
+                        completed = t_path.read_text(encoding="utf-8")
+
+                    # Summarization (always if api_key, with default prompt)
+                    if not ex.get("summary"):
+                        if api_key:
+                            _emit("info", f"生成摘要 {bvid}…")
+                            summary = summarize_text(completed, bvid, prompt, api_key, model, base_url)
+                            s_path.write_text(summary, encoding="utf-8")
+                            _emit("success", f"{bvid} 摘要已保存")
+                        else:
+                            _emit("info", f"{bvid}: 无 API Key，跳过摘要")
+
+                except Exception as e:
+                    _emit("error", f"{bvid} 处理失败: {e}")
+                    if wav_path:
+                        Path(wav_path).unlink(missing_ok=True)
+
+        dl = threading.Thread(target=downloader, daemon=True)
+        pr = threading.Thread(target=processor, daemon=True)
+        dl.start()
+        pr.start()
+        dl.join()
+        pr.join()
         _emit("success", "所有任务完成")
-    finally:
-        with processing_lock:
-            is_processing = False
 
+    finally:
+        with _process_lock:
+            _is_processing = False
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -153,11 +238,13 @@ def _processing_worker(
 def index():
     return render_template("index.html", providers=PROVIDERS)
 
+@app.route("/config")
+def config_page():
+    return render_template("config.html", providers=PROVIDERS)
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
 CONFIG_PATH = DATA_USERDATA / "config.json"
-
 
 @app.route("/api/config", methods=["GET"])
 def get_config():
@@ -169,33 +256,30 @@ def get_config():
             pass
     return jsonify({})
 
-
 @app.route("/api/config", methods=["POST"])
 def save_config():
     data = request.get_json(force=True, silent=True) or {}
     CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return jsonify({"ok": True})
 
-
 # ── Process ─────────────────────────────────────────────────────────────────
 
 @app.route("/api/process", methods=["POST"])
 def start_process():
-    global is_processing, status_messages
+    global _is_processing, status_messages, _requested_bvids
 
-    with processing_lock:
-        if is_processing:
-            return jsonify({"ok": False, "error": "已有任务在运行，请等待完成"}), 409
+    with _process_lock:
+        if _is_processing:
+            return jsonify({"ok": False, "error": "已有任务在运行"}), 409
 
         body = request.get_json(force=True, silent=True) or {}
-        raw_bvids = body.get("bvids", [])
-        # Accept newline-separated string or list
-        if isinstance(raw_bvids, str):
-            raw_bvids = raw_bvids.splitlines()
-        bvids = [b.strip() for b in raw_bvids if b.strip()]
+        raw = body.get("bvids", [])
+        if isinstance(raw, str):
+            raw = raw.splitlines()
+        bvids = [b.strip() for b in raw if b.strip()]
 
         if not bvids:
-            return jsonify({"ok": False, "error": "未提供任何 BV ID"}), 400
+            return jsonify({"ok": False, "error": "未提供 BV ID"}), 400
 
         api_key = body.get("api_key", "").strip()
         model = body.get("model", "deepseek-chat").strip()
@@ -203,18 +287,16 @@ def start_process():
         summary_prompt = body.get("summary_prompt", "").strip()
         cookie = body.get("cookie", "").strip()
 
-        # Reset status log for this run
         status_messages = []
-        is_processing = True
+        _requested_bvids = bvids
+        _is_processing = True
 
-    thread = threading.Thread(
+    threading.Thread(
         target=_processing_worker,
         args=(bvids, api_key, model, base_url, summary_prompt, cookie),
         daemon=True,
-    )
-    thread.start()
+    ).start()
     return jsonify({"ok": True, "count": len(bvids)})
-
 
 # ── SSE status stream ────────────────────────────────────────────────────────
 
@@ -232,10 +314,9 @@ def status_stream():
                 last_sent += 1
                 with _status_lock:
                     current_len = len(status_messages)
-            # If processing is done and we have sent everything, close the stream
-            if not is_processing and last_sent >= len(status_messages):
+            if not _is_processing and last_sent >= len(status_messages):
                 time.sleep(0.5)
-                if not is_processing and last_sent >= len(status_messages):
+                if not _is_processing and last_sent >= len(status_messages):
                     break
             time.sleep(0.1)
 
@@ -244,7 +325,6 @@ def status_stream():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
 
 # ── File listing ─────────────────────────────────────────────────────────────
 
@@ -259,35 +339,25 @@ def list_files():
     ]
     return jsonify({"files": files})
 
-
 # ── View / Download helpers ──────────────────────────────────────────────────
-
-def _merged_content(suffix: str) -> str:
-    paths = find_userdata_files(str(DATA_USERDATA), suffix)
-    if not paths:
-        return ""
-    return merge_files(paths)
-
 
 @app.route("/api/view/transcript")
 def view_transcript():
-    content = _merged_content("-transcript.txt")
+    content, _ = _merged_content("-transcript.txt")
     if not content:
         return "暂无文字稿", 404
     return Response(content, mimetype="text/plain; charset=utf-8")
 
-
 @app.route("/api/view/summary")
 def view_summary():
-    content = _merged_content("-summary.txt")
+    content, _ = _merged_content("-summary.txt")
     if not content:
         return "暂无摘要", 404
     return Response(content, mimetype="text/plain; charset=utf-8")
 
-
 @app.route("/api/download/transcript")
 def download_transcript():
-    content = _merged_content("-transcript.txt")
+    content, _ = _merged_content("-transcript.txt")
     if not content:
         return jsonify({"error": "暂无文字稿"}), 404
     tmp = DATA_TEMP / "merged-transcript.txt"
@@ -299,10 +369,9 @@ def download_transcript():
         mimetype="text/plain",
     )
 
-
 @app.route("/api/download/summary")
 def download_summary():
-    content = _merged_content("-summary.txt")
+    content, _ = _merged_content("-summary.txt")
     if not content:
         return jsonify({"error": "暂无摘要"}), 404
     tmp = DATA_TEMP / "merged-summary.txt"
@@ -313,7 +382,6 @@ def download_summary():
         download_name="merged-summary.txt",
         mimetype="text/plain",
     )
-
 
 # ── Clear operations ─────────────────────────────────────────────────────────
 
@@ -332,12 +400,10 @@ def clear_temp():
             pass
     return jsonify({"ok": True, "cleared": cleared})
 
-
 @app.route("/api/clear/all", methods=["POST"])
 def clear_all():
     cleared = 0
     for item in DATA_USERDATA.iterdir():
-        # Preserve config.json
         if item.name == "config.json":
             continue
         try:
@@ -350,7 +416,6 @@ def clear_all():
         except OSError:
             pass
     return jsonify({"ok": True, "cleared": cleared})
-
 
 # ---------------------------------------------------------------------------
 # Entry point

@@ -10,64 +10,22 @@
 
   <div class="warning-banner">不要一次下载太多，否则会被 B 站封 IP</div>
 
-  <main class="layout">
+  <nav class="nav">
+    <a href="/config">⚙ 配置</a>
+  </nav>
 
-    <!-- ══════════════════ LEFT PANEL — Inputs ══════════════════ -->
-    <section class="panel panel-inputs">
-      <h2>输入配置</h2>
+  <main class="layout-single">
 
+    <section class="panel">
       <div class="field">
         <label for="bvids">BV ID 列表（每行一个）</label>
         <textarea id="bvids" rows="6" placeholder="BV1ZDwWzpEgg&#10;BV1abcXYZ123"></textarea>
       </div>
 
-      <div class="field">
-        <label for="summary-prompt">摘要提示词</label>
-        <textarea id="summary-prompt" rows="4"
-          placeholder="请总结这段视频的主要内容，包括关键观点和结论。"></textarea>
-      </div>
-
-      <div class="field">
-        <label for="provider">LLM 服务商</label>
-        <select id="provider">
-          {% for key, info in providers.items() %}
-          <option value="{{ key }}" data-base-url="{{ info.base_url }}"
-            data-default-model="{{ info.default_model }}"
-            data-models="{{ info.models | join(',') }}">
-            {{ info.name }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="api-key">API Key</label>
-        <input type="password" id="api-key" placeholder="sk-xxxxxxxxxxxxxxxx">
-      </div>
-
-      <div class="field">
-        <label for="model">模型</label>
-        <select id="model"></select>
-        <!-- Custom model input, shown only for "custom" provider -->
-        <input type="text" id="model-custom" placeholder="自定义模型名称"
-          style="display:none; margin-top:6px;">
-      </div>
-
-      <div class="field" id="base-url-field" style="display:none;">
-        <label for="base-url">API Base URL</label>
-        <input type="text" id="base-url" placeholder="https://api.example.com/v1">
-      </div>
-
-      <div class="field">
-        <label for="cookie">Bilibili Cookie（可选，用于高清/登录内容）</label>
-        <textarea id="cookie" rows="2" placeholder="SESSDATA=xxx; bili_jct=yyy; ..."></textarea>
-      </div>
-
       <button class="btn btn-primary btn-wide" id="btn-process">开始处理</button>
     </section>
 
-    <!-- ══════════════════ RIGHT PANEL — Controls ══════════════════ -->
-    <section class="panel panel-controls">
+    <section class="panel">
       <h2>操作</h2>
 
       <div class="btn-group">
@@ -83,8 +41,7 @@
       </div>
 
       <div class="btn-group">
-        <button class="btn btn-secondary" id="btn-clear-log">清空输出</button>
-        <button class="btn btn-secondary" id="btn-save-config">保存配置</button>
+        <button class="btn btn-secondary" id="btn-clear-log">清空日志</button>
       </div>
 
       <h2>处理日志</h2>
@@ -117,103 +74,7 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Provider / model selector
-  // ─────────────────────────────────────────────────────────────────────────
-  function populateModels(providerKey) {
-    const sel = $('provider');
-    const opt = sel.querySelector('[value="' + providerKey + '"]');
-    if (!opt) return;
-    const models = opt.dataset.models ? opt.dataset.models.split(',').filter(Boolean) : [];
-    const modelSel = $('model');
-    const customInput = $('model-custom');
-    const baseUrlField = $('base-url-field');
-
-    modelSel.innerHTML = '';
-    if (providerKey === 'custom') {
-      modelSel.style.display = 'none';
-      customInput.style.display = 'block';
-      baseUrlField.style.display = 'block';
-    } else {
-      modelSel.style.display = 'block';
-      customInput.style.display = 'none';
-      baseUrlField.style.display = 'none';
-      models.forEach(m => {
-        const o = document.createElement('option');
-        o.value = m;
-        o.textContent = m;
-        modelSel.appendChild(o);
-      });
-      // Set default model
-      const defaultModel = opt.dataset.defaultModel;
-      if (defaultModel) modelSel.value = defaultModel;
-    }
-  }
-
-  $('provider').addEventListener('change', e => populateModels(e.target.value));
-  // Initialise on page load
-  populateModels($('provider').value);
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Config load / save
-  // ─────────────────────────────────────────────────────────────────────────
-  function loadConfig() {
-    fetch('/api/config')
-      .then(r => r.json())
-      .then(cfg => {
-        if (cfg.bvids)          $('bvids').value = cfg.bvids;
-        if (cfg.summary_prompt) $('summary-prompt').value = cfg.summary_prompt;
-        if (cfg.api_key)        $('api-key').value = cfg.api_key;
-        if (cfg.cookie)         $('cookie').value = cfg.cookie;
-        if (cfg.provider) {
-          $('provider').value = cfg.provider;
-          populateModels(cfg.provider);
-        }
-        if (cfg.model) {
-          if ($('provider').value === 'custom') {
-            $('model-custom').value = cfg.model;
-          } else {
-            $('model').value = cfg.model;
-          }
-        }
-        if (cfg.base_url) $('base-url').value = cfg.base_url;
-      })
-      .catch(() => {});
-  }
-
-  function saveConfig() {
-    const provider = $('provider').value;
-    const model = provider === 'custom'
-      ? $('model-custom').value.trim()
-      : $('model').value;
-    const providerOpt = $('provider').querySelector('[value="' + provider + '"]');
-    const baseUrl = provider === 'custom'
-      ? $('base-url').value.trim()
-      : (providerOpt ? providerOpt.dataset.baseUrl : '');
-
-    const cfg = {
-      bvids: $('bvids').value,
-      summary_prompt: $('summary-prompt').value,
-      api_key: $('api-key').value,
-      cookie: $('cookie').value,
-      provider,
-      model,
-      base_url: baseUrl,
-    };
-    fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cfg),
-    })
-      .then(r => r.json())
-      .then(() => appendLog('success', '配置已保存'))
-      .catch(e => appendLog('error', '保存配置失败：' + e));
-  }
-
-  $('btn-save-config').addEventListener('click', saveConfig);
-  loadConfig();
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Start processing
+  // Start processing — fetch config first, then POST to /api/process
   // ─────────────────────────────────────────────────────────────────────────
   let eventSource = null;
 
@@ -227,52 +88,45 @@
       try {
         const msg = JSON.parse(e.data);
         appendLog(msg.type || 'info', msg.text || '');
-        // Close SSE when the server signals completion
         if ((msg.type === 'success' || msg.type === 'error') &&
             (msg.text === '所有任务完成' || msg.text.startsWith('所有任务'))) {
-          // Keep open a bit to catch final messages, then close
           setTimeout(() => { if (eventSource) { eventSource.close(); eventSource = null; } }, 2000);
         }
       } catch (_) {}
     };
     eventSource.onerror = () => {
-      // Server closed the stream — normal end of processing
       if (eventSource) { eventSource.close(); eventSource = null; }
     };
   }
 
   $('btn-process').addEventListener('click', () => {
-    const provider = $('provider').value;
-    const model = provider === 'custom'
-      ? $('model-custom').value.trim()
-      : $('model').value;
-    const providerOpt = $('provider').querySelector('[value="' + provider + '"]');
-    const baseUrl = provider === 'custom'
-      ? $('base-url').value.trim()
-      : (providerOpt ? providerOpt.dataset.baseUrl : '');
-
-    const body = {
-      bvids: $('bvids').value.split('\n').map(s => s.trim()).filter(Boolean),
-      api_key: $('api-key').value.trim(),
-      model,
-      base_url: baseUrl,
-      summary_prompt: $('summary-prompt').value.trim(),
-      cookie: $('cookie').value.trim(),
-    };
-
-    if (!body.bvids.length) {
+    const bvids = $('bvids').value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!bvids.length) {
       appendLog('error', '请先填写 BV ID 列表');
       return;
     }
 
     $('btn-process').disabled = true;
-    appendLog('info', '正在提交任务…');
+    appendLog('info', '正在读取配置…');
 
-    fetch('/api/process', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        const body = {
+          bvids,
+          api_key:        cfg.api_key        || '',
+          model:          cfg.model          || '',
+          base_url:       cfg.base_url       || '',
+          summary_prompt: cfg.summary_prompt || '',
+          cookie:         cfg.cookie         || '',
+        };
+        appendLog('info', '正在提交任务…');
+        return fetch('/api/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      })
       .then(r => r.json())
       .then(d => {
         if (d.ok) {

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>配置 — a2doc</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <div class="warning-banner">不要一次下载太多，否则会被 B 站封 IP</div>
+
+  <nav class="nav">
+    <a href="/">← 返回主页</a>
+  </nav>
+
+  <main class="layout-config">
+
+    <section class="panel">
+      <h2>配置</h2>
+
+      <div class="field">
+        <label for="provider">LLM 服务商</label>
+        <select id="provider">
+          {% for key, info in providers.items() %}
+          <option value="{{ key }}" data-base-url="{{ info.base_url }}"
+            data-default-model="{{ info.default_model }}"
+            data-models="{{ info.models | join(',') }}">
+            {{ info.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="api-key">API Key</label>
+        <input type="password" id="api-key" placeholder="sk-xxxxxxxxxxxxxxxx">
+      </div>
+
+      <div class="field">
+        <label for="model">模型</label>
+        <select id="model"></select>
+        <input type="text" id="model-custom" placeholder="自定义模型名称"
+          style="display:none; margin-top:6px;">
+      </div>
+
+      <div class="field" id="base-url-field" style="display:none;">
+        <label for="base-url">API Base URL</label>
+        <input type="text" id="base-url" placeholder="https://api.example.com/v1">
+      </div>
+
+      <div class="field">
+        <label for="cookie">Bilibili Cookie（可选，用于高清/登录内容）</label>
+        <textarea id="cookie" rows="2" placeholder="SESSDATA=xxx; bili_jct=yyy; ..."></textarea>
+      </div>
+
+      <div class="field">
+        <label for="summary-prompt">摘要提示词</label>
+        <textarea id="summary-prompt" rows="4"
+          placeholder="请总结这段视频的主要内容，包括关键观点和结论。"></textarea>
+      </div>
+
+      <button class="btn btn-primary btn-wide" id="btn-save">保存配置</button>
+
+      <div id="save-msg" class="save-msg" style="display:none;"></div>
+    </section>
+
+  </main>
+
+  <script>
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+
+  function showMsg(ok, text) {
+    const el = $('save-msg');
+    el.textContent = text;
+    el.className = 'save-msg ' + (ok ? 'save-msg-ok' : 'save-msg-err');
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 3000);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Provider / model selector
+  // ─────────────────────────────────────────────────────────────────────────
+  function populateModels(providerKey) {
+    const sel = $('provider');
+    const opt = sel.querySelector('[value="' + providerKey + '"]');
+    if (!opt) return;
+    const models = opt.dataset.models ? opt.dataset.models.split(',').filter(Boolean) : [];
+    const modelSel = $('model');
+    const customInput = $('model-custom');
+    const baseUrlField = $('base-url-field');
+
+    modelSel.innerHTML = '';
+    if (providerKey === 'custom') {
+      modelSel.style.display = 'none';
+      customInput.style.display = 'block';
+      baseUrlField.style.display = 'block';
+    } else {
+      modelSel.style.display = 'block';
+      customInput.style.display = 'none';
+      baseUrlField.style.display = 'none';
+      models.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m;
+        o.textContent = m;
+        modelSel.appendChild(o);
+      });
+      const defaultModel = opt.dataset.defaultModel;
+      if (defaultModel) modelSel.value = defaultModel;
+    }
+  }
+
+  $('provider').addEventListener('change', e => populateModels(e.target.value));
+  populateModels($('provider').value);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Load config
+  // ─────────────────────────────────────────────────────────────────────────
+  function loadConfig() {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        if (cfg.summary_prompt) $('summary-prompt').value = cfg.summary_prompt;
+        if (cfg.api_key)        $('api-key').value = cfg.api_key;
+        if (cfg.cookie)         $('cookie').value = cfg.cookie;
+        if (cfg.provider) {
+          $('provider').value = cfg.provider;
+          populateModels(cfg.provider);
+        }
+        if (cfg.model) {
+          if ($('provider').value === 'custom') {
+            $('model-custom').value = cfg.model;
+          } else {
+            $('model').value = cfg.model;
+          }
+        }
+        if (cfg.base_url) $('base-url').value = cfg.base_url;
+      })
+      .catch(() => {});
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Save config
+  // ─────────────────────────────────────────────────────────────────────────
+  $('btn-save').addEventListener('click', () => {
+    const provider = $('provider').value;
+    const model = provider === 'custom'
+      ? $('model-custom').value.trim()
+      : $('model').value;
+    const providerOpt = $('provider').querySelector('[value="' + provider + '"]');
+    const baseUrl = provider === 'custom'
+      ? $('base-url').value.trim()
+      : (providerOpt ? providerOpt.dataset.baseUrl : '');
+
+    const cfg = {
+      summary_prompt: $('summary-prompt').value,
+      api_key:        $('api-key').value,
+      cookie:         $('cookie').value,
+      provider,
+      model,
+      base_url:       baseUrl,
+    };
+
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    })
+      .then(r => r.json())
+      .then(() => showMsg(true, '配置已保存'))
+      .catch(e => showMsg(false, '保存失败：' + e));
+  });
+
+  loadConfig();
+  </script>
+
+</body>
+</html>
