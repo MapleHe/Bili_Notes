@@ -1,1 +1,1 @@
-"""Utility modules for a2doc."""
+"""Utility modules for Bili_Notes."""

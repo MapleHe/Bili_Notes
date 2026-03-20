@@ -1,0 +1,6 @@
+flask
+curl-cffi
+sherpa-onnx
+soundfile
+numpy
+openai

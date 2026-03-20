@@ -1,5 +1,5 @@
 """
-a2doc Flask web application.
+Bili_Notes Flask web application.
 Bilibili audio downloader and transcriber with LLM completion and summarisation.
 """
 
