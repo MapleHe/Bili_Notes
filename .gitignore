@@ -30,3 +30,6 @@ Thumbs.db
 
 # Models (large files)
 models/
+
+# Claude Code local settings (may contain permissions/paths)
+.claude/
