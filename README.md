@@ -13,7 +13,14 @@ This is a demo project for learning purposes only.
 
 ## Installation
 
-Download and unzip the repository, or clone it:
+Download the archive and unarchive the files:
+
+```bash
+wget -O Bili_Note-alpha.tar.gz https://codeload.github.com/MapleHe/Bili_Note/tar.gz/refs/tags/alpha
+tar -zxf Bili_Note-alpha && mv Bili_Note-alpha Bili_Note && rm Bili_Note-alpha.tar.gz
+``
+
+OR use git clone:
 
 ```bash
 git clone https://github.com/MapleHe/Bili_Notes.git
@@ -22,12 +29,12 @@ git clone https://github.com/MapleHe/Bili_Notes.git
 ## Usage
 
 ```bash
-cd Bili_Notes/
+cd Bili_Note/
 chmod u+x ./start_server.sh
 ./start_server.sh
 ```
 
-The startup script automatically detects your Python environment (`uv`, `.venv`, or system `pip`) and installs dependencies from `requirements.txt` before launching the server.
+The startup script automatically detects your Python environment (`uv`, `.venv`, or system `pip3`, or `python -m pip`) and installs dependencies from `requirements.txt` before launching the server.
 
 ## Contributing
 
