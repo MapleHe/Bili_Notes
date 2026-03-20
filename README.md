@@ -18,7 +18,7 @@ Download the archive and unarchive the files:
 ```bash
 wget -O Bili_Note-alpha.tar.gz https://codeload.github.com/MapleHe/Bili_Note/tar.gz/refs/tags/alpha
 tar -zxf Bili_Note-alpha && mv Bili_Note-alpha Bili_Note && rm Bili_Note-alpha.tar.gz
-``
+```
 
 OR use git clone:
 
