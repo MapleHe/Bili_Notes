@@ -157,6 +157,9 @@ def _processing_worker(
 
             pipe.put(_DONE)
 
+        total = len(bvids)
+        done_count = [0]  # mutable counter shared with processor closure
+
         def processor():
             _model_ready.wait(timeout=300)
             while True:
@@ -164,10 +167,17 @@ def _processing_worker(
                 if item is _DONE:
                     break
 
-                if item.get("skip_all") or item.get("error"):
+                bvid = item["bvid"]
+
+                if item.get("skip_all"):
+                    done_count[0] += 1
+                    _emit("info", f"({done_count[0]}/{total}) {bvid}: 已完成，跳过")
+                    continue
+                if item.get("error"):
+                    done_count[0] += 1
+                    _emit("error", f"({done_count[0]}/{total}) {bvid}: 下载失败")
                     continue
 
-                bvid = item["bvid"]
                 wav_path = item.get("wav_path")
                 safe_title = item.get("safe_title")
                 ex = item.get("existing", {}) or {}
@@ -213,8 +223,12 @@ def _processing_worker(
                         else:
                             _emit("info", f"{bvid}: 无 API Key，跳过摘要")
 
+                    done_count[0] += 1
+                    _emit("success", f"({done_count[0]}/{total}) {bvid} 完成")
+
                 except Exception as e:
-                    _emit("error", f"{bvid} 处理失败: {e}")
+                    done_count[0] += 1
+                    _emit("error", f"({done_count[0]}/{total}) {bvid} 处理失败: {e}")
                     if wav_path:
                         Path(wav_path).unlink(missing_ok=True)
 
@@ -327,6 +341,15 @@ def status_stream():
     )
 
 # ── File listing ─────────────────────────────────────────────────────────────
+
+@app.route("/api/bvids")
+def list_bvids():
+    """Return unique BV IDs that have existing transcript or summary files."""
+    paths = find_userdata_files(str(DATA_USERDATA), "-transcript.txt") + \
+            find_userdata_files(str(DATA_USERDATA), "-summary.txt")
+    bvids = sorted({Path(p).name.split("-")[0] for p in paths})
+    return jsonify({"bvids": bvids})
+
 
 @app.route("/api/files")
 def list_files():

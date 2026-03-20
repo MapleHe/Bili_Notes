@@ -23,6 +23,12 @@
       </div>
 
       <button class="btn btn-primary btn-wide" id="btn-process">开始处理</button>
+
+      <div class="log-header">
+        <span>处理日志</span>
+        <button class="btn btn-secondary btn-xs" id="btn-clear-log">清空</button>
+      </div>
+      <div id="status-log" class="status-log" aria-live="polite" aria-label="处理日志"></div>
     </section>
 
     <section class="panel">
@@ -33,6 +39,7 @@
         <button class="btn" id="btn-dl-summary">下载合并总结</button>
         <button class="btn" id="btn-view-transcript">查看文字稿</button>
         <button class="btn" id="btn-view-summary">查看总结</button>
+        <button class="btn btn-secondary" id="btn-show-bvids">查看已有 BV 列表</button>
       </div>
 
       <div class="btn-group btn-group-danger">
@@ -40,12 +47,7 @@
         <button class="btn btn-danger" id="btn-clear-all">清除所有文件</button>
       </div>
 
-      <div class="btn-group">
-        <button class="btn btn-secondary" id="btn-clear-log">清空日志</button>
-      </div>
-
-      <h2>处理日志</h2>
-      <div id="status-log" class="status-log" aria-live="polite" aria-label="处理日志"></div>
+      <div id="bvid-list" class="bvid-list" style="display:none;"></div>
     </section>
 
   </main>
@@ -171,6 +173,22 @@
   });
   $('btn-clear-log').addEventListener('click', () => {
     $('status-log').innerHTML = '';
+  });
+
+  $('btn-show-bvids').addEventListener('click', () => {
+    const box = $('bvid-list');
+    if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+    fetch('/api/bvids')
+      .then(r => r.json())
+      .then(d => {
+        if (!d.bvids.length) {
+          box.textContent = '（暂无已处理的 BV ID）';
+        } else {
+          box.textContent = d.bvids.join('\n');
+        }
+        box.style.display = 'block';
+      })
+      .catch(e => appendLog('error', '获取 BV 列表失败：' + e));
   });
   </script>
 
