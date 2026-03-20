@@ -4,10 +4,15 @@ import os
 import re
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, urlparse
 
-from curl_cffi import requests as cffi_requests
+try:
+    from curl_cffi import requests as _http
+    _CURL_CFFI_AVAILABLE = True
+except ImportError:
+    import requests as _http  # type: ignore[no-redef]
+    _CURL_CFFI_AVAILABLE = False
 
 
 _MIRROR_HOST_RE = re.compile(
@@ -33,7 +38,7 @@ def _normalize_url(url: str) -> str:
     return url.replace("http://", "https://") if url else url
 
 
-def _cookie_to_header(cookie: Optional[str | dict]) -> Optional[str]:
+def _cookie_to_header(cookie: Optional[Union[str, dict]]) -> Optional[str]:
     if cookie is None:
         return None
     if isinstance(cookie, str):
@@ -111,21 +116,49 @@ def _pick_preferred_url(all_urls: List[str], prefer_url_type: Optional[str]) -> 
     return sorted(all_urls, key=lambda u: order.get(_classify_url_type(u), 999))[0]
 
 
-def _build_session(page_url: str, cookie: Optional[str | dict]) -> cffi_requests.Session:
-    sess = cffi_requests.Session(impersonate="chrome110")
-    sess.headers.update(
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/110.0.0.0 Safari/537.36"
-            ),
-            "Referer": page_url,
-            "Origin": "https://www.bilibili.com",
-            "Accept": "application/json,text/plain,*/*",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        }
-    )
+def _build_session(page_url: str, cookie: Optional[Union[str, dict]]) -> Any:
+    if _CURL_CFFI_AVAILABLE:
+        # curl_cffi handles TLS/HTTP2 fingerprint, header order, and default browser
+        # headers (UA, sec-ch-ua, Accept-Encoding, etc.) automatically via impersonate.
+        # Only override Bilibili-specific application headers here.
+        sess = _http.Session(impersonate="chrome145")
+        sess.headers.update(
+            {
+                "Referer": page_url,
+                "Origin": "https://www.bilibili.com",
+                # Override Accept-Language to zh-CN so Bilibili returns Chinese content.
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                # API XHR Accept; overrides the default HTML-page Accept from the profile.
+                "Accept": "application/json, text/plain, */*",
+            }
+        )
+    else:
+        # Fallback: manually replicate Chrome 145 (Windows) headers as closely as
+        # possible without TLS impersonation.
+        sess = _http.Session()
+        sess.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/145.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Referer": page_url,
+                "Origin": "https://www.bilibili.com",
+                "sec-ch-ua": (
+                    '"Chromium";v="145", "Google Chrome";v="145", "Not-A.Brand";v="24"'
+                ),
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-site",
+            }
+        )
+
     cookie_header = _cookie_to_header(cookie)
     if cookie_header:
         sess.headers["Cookie"] = cookie_header
@@ -133,7 +166,7 @@ def _build_session(page_url: str, cookie: Optional[str | dict]) -> cffi_requests
 
 
 def _fetch_page_meta(
-    sess: cffi_requests.Session,
+    sess: Any,
     page_url: str,
     timeout: int = 20,
 ) -> Dict[str, Any]:
@@ -216,7 +249,7 @@ def _fetch_page_meta(
 
 def extract_bilibili_dash_audio_url(
     page_url: str,
-    cookie: Optional[str | dict] = None,
+    cookie: Optional[Union[str, dict]] = None,
     qn: Optional[int] = None,
     prefer_url_type: str = "mirror",
     timeout: int = 20,
@@ -342,7 +375,7 @@ def download_audio(
     download_url: str,
     filename: str,
     page_url: str = "https://www.bilibili.com",
-    cookie: Optional[str | dict] = None,
+    cookie: Optional[Union[str, dict]] = None,
     chunk_size: int = 1024 * 1024,
     timeout: int = 60,
     show_progress: bool = True,
@@ -425,7 +458,7 @@ def download_audio(
 def download_bilibili_wav(
     bvid: str,
     output_dir: str,
-    cookie: Optional[str | dict] = None,
+    cookie: Optional[Union[str, dict]] = None,
     show_progress: bool = True,
 ) -> Dict[str, Any]:
     """

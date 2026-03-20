@@ -1,6 +1,18 @@
 flask
-curl-cffi
-sherpa-onnx
-soundfile
-numpy
+requests
 openai
+soundfile
+
+# curl-cffi: enables Chrome TLS/HTTP2 fingerprint impersonation (better anti-crawling).
+# Stable release lacks ARM64 wheels. On Termux/Android, install with:
+#   pip install curl-cffi --pre
+# Code falls back to plain requests if curl-cffi is unavailable.
+curl-cffi
+
+# numpy: on Termux/Android, install via pkg instead of pip to avoid source build:
+#   pkg install python-numpy
+# (pip will skip it if already installed by pkg)
+numpy
+
+# sherpa-onnx: install last; it may also need system packages on Termux.
+sherpa-onnx
