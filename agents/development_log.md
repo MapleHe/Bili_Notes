@@ -1,4 +1,4 @@
-# a2doc Development Log
+# Bili_Notes Development Log
 
 ## Project Overview
 Building a Flask-based web application for Bilibili audio download and transcription.
