@@ -1,0 +1,231 @@
+/* ═══════════════════════════════════════════════════════════
+   a2doc — global styles
+   Clean, minimal, mobile-friendly (no frameworks)
+   ═══════════════════════════════════════════════════════════ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei",
+               sans-serif;
+  background: #f4f5f7;
+  color: #1a1a1a;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── Warning banner ──────────────────────────────────────── */
+.warning-banner {
+  background: #d32f2f;
+  color: #fff;
+  text-align: center;
+  padding: 10px 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+/* ── Two-column layout ───────────────────────────────────── */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  max-width: 1100px;
+  margin: 24px auto;
+  padding: 0 16px 40px;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Panel card ──────────────────────────────────────────── */
+.panel {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  padding: 20px 24px 24px;
+}
+
+.panel h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: #333;
+  border-bottom: 2px solid #e8eaf0;
+  padding-bottom: 8px;
+}
+
+/* ── Form fields ─────────────────────────────────────────── */
+.field {
+  margin-bottom: 14px;
+}
+
+.field label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 5px;
+}
+
+.field textarea,
+.field input[type="text"],
+.field input[type="password"],
+.field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  background: #fafafa;
+  color: #1a1a1a;
+  transition: border-color .15s, box-shadow .15s;
+  resize: vertical;
+}
+
+.field textarea:focus,
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: #3f6ad8;
+  box-shadow: 0 0 0 3px rgba(63,106,216,.15);
+  background: #fff;
+}
+
+.field select {
+  cursor: pointer;
+  appearance: auto;
+}
+
+/* ── Buttons ─────────────────────────────────────────────── */
+.btn {
+  display: inline-block;
+  padding: 9px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: #e8eaf0;
+  color: #333;
+  transition: background .15s, transform .08s;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: #d4d7e3;
+}
+
+.btn:active {
+  transform: scale(.97);
+}
+
+.btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #3f6ad8;
+  color: #fff;
+}
+.btn-primary:hover {
+  background: #3059c2;
+}
+
+.btn-secondary {
+  background: #6c757d;
+  color: #fff;
+}
+.btn-secondary:hover {
+  background: #5a6268;
+}
+
+.btn-danger {
+  background: #e53935;
+  color: #fff;
+}
+.btn-danger:hover {
+  background: #c62828;
+}
+
+.btn-wide {
+  width: 100%;
+  margin-top: 6px;
+  padding: 11px;
+  font-size: 0.95rem;
+}
+
+/* ── Button groups ───────────────────────────────────────── */
+.btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.btn-group .btn {
+  flex: 1 1 calc(50% - 4px);
+  min-width: 120px;
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  .btn-group .btn {
+    flex: 1 1 100%;
+  }
+}
+
+/* ── Status log ──────────────────────────────────────────── */
+.status-log {
+  background: #1a1a2e;
+  color: #c9d1d9;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  padding: 12px 14px;
+  border-radius: 8px;
+  min-height: 200px;
+  max-height: 420px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line {
+  padding: 1px 0;
+}
+
+.log-info    { color: #79c0ff; }
+.log-success { color: #56d364; }
+.log-error   { color: #f85149; }
+.log-warning { color: #e3b341; }
+
+/* ── Scrollbar styling (Webkit) ──────────────────────────── */
+.status-log::-webkit-scrollbar {
+  width: 6px;
+}
+.status-log::-webkit-scrollbar-track {
+  background: #0d1117;
+  border-radius: 4px;
+}
+.status-log::-webkit-scrollbar-thumb {
+  background: #444c56;
+  border-radius: 4px;
+}

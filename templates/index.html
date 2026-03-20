@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>a2doc — Bilibili 音频转文字</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <div class="warning-banner">不要一次下载太多，否则会被 B 站封 IP</div>
+
+  <main class="layout">
+
+    <!-- ══════════════════ LEFT PANEL — Inputs ══════════════════ -->
+    <section class="panel panel-inputs">
+      <h2>输入配置</h2>
+
+      <div class="field">
+        <label for="bvids">BV ID 列表（每行一个）</label>
+        <textarea id="bvids" rows="6" placeholder="BV1ZDwWzpEgg&#10;BV1abcXYZ123"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="summary-prompt">摘要提示词</label>
+        <textarea id="summary-prompt" rows="4"
+          placeholder="请总结这段视频的主要内容，包括关键观点和结论。"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="provider">LLM 服务商</label>
+        <select id="provider">
+          {% for key, info in providers.items() %}
+          <option value="{{ key }}" data-base-url="{{ info.base_url }}"
+            data-default-model="{{ info.default_model }}"
+            data-models="{{ info.models | join(',') }}">
+            {{ info.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="api-key">API Key</label>
+        <input type="password" id="api-key" placeholder="sk-xxxxxxxxxxxxxxxx">
+      </div>
+
+      <div class="field">
+        <label for="model">模型</label>
+        <select id="model"></select>
+        <!-- Custom model input, shown only for "custom" provider -->
+        <input type="text" id="model-custom" placeholder="自定义模型名称"
+          style="display:none; margin-top:6px;">
+      </div>
+
+      <div class="field" id="base-url-field" style="display:none;">
+        <label for="base-url">API Base URL</label>
+        <input type="text" id="base-url" placeholder="https://api.example.com/v1">
+      </div>
+
+      <div class="field">
+        <label for="cookie">Bilibili Cookie（可选，用于高清/登录内容）</label>
+        <textarea id="cookie" rows="2" placeholder="SESSDATA=xxx; bili_jct=yyy; ..."></textarea>
+      </div>
+
+      <button class="btn btn-primary btn-wide" id="btn-process">开始处理</button>
+    </section>
+
+    <!-- ══════════════════ RIGHT PANEL — Controls ══════════════════ -->
+    <section class="panel panel-controls">
+      <h2>操作</h2>
+
+      <div class="btn-group">
+        <button class="btn" id="btn-dl-transcript">下载合并文字稿</button>
+        <button class="btn" id="btn-dl-summary">下载合并总结</button>
+        <button class="btn" id="btn-view-transcript">查看文字稿</button>
+        <button class="btn" id="btn-view-summary">查看总结</button>
+      </div>
+
+      <div class="btn-group btn-group-danger">
+        <button class="btn btn-danger" id="btn-clear-temp">清理临时文件</button>
+        <button class="btn btn-danger" id="btn-clear-all">清除所有文件</button>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-secondary" id="btn-clear-log">清空输出</button>
+        <button class="btn btn-secondary" id="btn-save-config">保存配置</button>
+      </div>
+
+      <h2>处理日志</h2>
+      <div id="status-log" class="status-log" aria-live="polite" aria-label="处理日志"></div>
+    </section>
+
+  </main>
+
+  <script>
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+
+  function appendLog(type, text) {
+    const log = $('status-log');
+    const line = document.createElement('div');
+    line.className = 'log-line log-' + type;
+    line.textContent = text;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function confirmAction(message, url, successMsg) {
+    if (!confirm(message)) return;
+    fetch(url, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => appendLog('success', successMsg + '（已清理 ' + (d.cleared || 0) + ' 项）'))
+      .catch(e => appendLog('error', '操作失败：' + e));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Provider / model selector
+  // ─────────────────────────────────────────────────────────────────────────
+  function populateModels(providerKey) {
+    const sel = $('provider');
+    const opt = sel.querySelector('[value="' + providerKey + '"]');
+    if (!opt) return;
+    const models = opt.dataset.models ? opt.dataset.models.split(',').filter(Boolean) : [];
+    const modelSel = $('model');
+    const customInput = $('model-custom');
+    const baseUrlField = $('base-url-field');
+
+    modelSel.innerHTML = '';
+    if (providerKey === 'custom') {
+      modelSel.style.display = 'none';
+      customInput.style.display = 'block';
+      baseUrlField.style.display = 'block';
+    } else {
+      modelSel.style.display = 'block';
+      customInput.style.display = 'none';
+      baseUrlField.style.display = 'none';
+      models.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m;
+        o.textContent = m;
+        modelSel.appendChild(o);
+      });
+      // Set default model
+      const defaultModel = opt.dataset.defaultModel;
+      if (defaultModel) modelSel.value = defaultModel;
+    }
+  }
+
+  $('provider').addEventListener('change', e => populateModels(e.target.value));
+  // Initialise on page load
+  populateModels($('provider').value);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Config load / save
+  // ─────────────────────────────────────────────────────────────────────────
+  function loadConfig() {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        if (cfg.bvids)          $('bvids').value = cfg.bvids;
+        if (cfg.summary_prompt) $('summary-prompt').value = cfg.summary_prompt;
+        if (cfg.api_key)        $('api-key').value = cfg.api_key;
+        if (cfg.cookie)         $('cookie').value = cfg.cookie;
+        if (cfg.provider) {
+          $('provider').value = cfg.provider;
+          populateModels(cfg.provider);
+        }
+        if (cfg.model) {
+          if ($('provider').value === 'custom') {
+            $('model-custom').value = cfg.model;
+          } else {
+            $('model').value = cfg.model;
+          }
+        }
+        if (cfg.base_url) $('base-url').value = cfg.base_url;
+      })
+      .catch(() => {});
+  }
+
+  function saveConfig() {
+    const provider = $('provider').value;
+    const model = provider === 'custom'
+      ? $('model-custom').value.trim()
+      : $('model').value;
+    const providerOpt = $('provider').querySelector('[value="' + provider + '"]');
+    const baseUrl = provider === 'custom'
+      ? $('base-url').value.trim()
+      : (providerOpt ? providerOpt.dataset.baseUrl : '');
+
+    const cfg = {
+      bvids: $('bvids').value,
+      summary_prompt: $('summary-prompt').value,
+      api_key: $('api-key').value,
+      cookie: $('cookie').value,
+      provider,
+      model,
+      base_url: baseUrl,
+    };
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    })
+      .then(r => r.json())
+      .then(() => appendLog('success', '配置已保存'))
+      .catch(e => appendLog('error', '保存配置失败：' + e));
+  }
+
+  $('btn-save-config').addEventListener('click', saveConfig);
+  loadConfig();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Start processing
+  // ─────────────────────────────────────────────────────────────────────────
+  let eventSource = null;
+
+  function startSSE() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    eventSource = new EventSource('/api/status');
+    eventSource.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        appendLog(msg.type || 'info', msg.text || '');
+        // Close SSE when the server signals completion
+        if ((msg.type === 'success' || msg.type === 'error') &&
+            (msg.text === '所有任务完成' || msg.text.startsWith('所有任务'))) {
+          // Keep open a bit to catch final messages, then close
+          setTimeout(() => { if (eventSource) { eventSource.close(); eventSource = null; } }, 2000);
+        }
+      } catch (_) {}
+    };
+    eventSource.onerror = () => {
+      // Server closed the stream — normal end of processing
+      if (eventSource) { eventSource.close(); eventSource = null; }
+    };
+  }
+
+  $('btn-process').addEventListener('click', () => {
+    const provider = $('provider').value;
+    const model = provider === 'custom'
+      ? $('model-custom').value.trim()
+      : $('model').value;
+    const providerOpt = $('provider').querySelector('[value="' + provider + '"]');
+    const baseUrl = provider === 'custom'
+      ? $('base-url').value.trim()
+      : (providerOpt ? providerOpt.dataset.baseUrl : '');
+
+    const body = {
+      bvids: $('bvids').value.split('\n').map(s => s.trim()).filter(Boolean),
+      api_key: $('api-key').value.trim(),
+      model,
+      base_url: baseUrl,
+      summary_prompt: $('summary-prompt').value.trim(),
+      cookie: $('cookie').value.trim(),
+    };
+
+    if (!body.bvids.length) {
+      appendLog('error', '请先填写 BV ID 列表');
+      return;
+    }
+
+    $('btn-process').disabled = true;
+    appendLog('info', '正在提交任务…');
+
+    fetch('/api/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          appendLog('info', `已接受 ${d.count} 个 BV ID，开始处理…`);
+          startSSE();
+        } else {
+          appendLog('error', d.error || '提交失败');
+        }
+      })
+      .catch(e => appendLog('error', '网络错误：' + e))
+      .finally(() => { $('btn-process').disabled = false; });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Download / View buttons
+  // ─────────────────────────────────────────────────────────────────────────
+  $('btn-dl-transcript').addEventListener('click', () => {
+    window.location.href = '/api/download/transcript';
+  });
+  $('btn-dl-summary').addEventListener('click', () => {
+    window.location.href = '/api/download/summary';
+  });
+  $('btn-view-transcript').addEventListener('click', () => {
+    window.open('/api/view/transcript', '_blank');
+  });
+  $('btn-view-summary').addEventListener('click', () => {
+    window.open('/api/view/summary', '_blank');
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Clear buttons
+  // ─────────────────────────────────────────────────────────────────────────
+  $('btn-clear-temp').addEventListener('click', () => {
+    confirmAction('确定要清理所有临时文件吗？', '/api/clear/temp', '临时文件已清理');
+  });
+  $('btn-clear-all').addEventListener('click', () => {
+    confirmAction(
+      '确定要清除 userdata 下所有文件吗？此操作不可撤销，config.json 将被保留。',
+      '/api/clear/all',
+      '用户数据已清除'
+    );
+  });
+  $('btn-clear-log').addEventListener('click', () => {
+    $('status-log').innerHTML = '';
+  });
+  </script>
+
+</body>
+</html>
