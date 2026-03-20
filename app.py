@@ -369,14 +369,14 @@ def view_transcript():
     content, _ = _merged_content("-transcript.txt")
     if not content:
         return "暂无文字稿", 404
-    return Response(content, mimetype="text/plain; charset=utf-8")
+    return render_template("view.html", title="文字稿", content=content)
 
 @app.route("/api/view/summary")
 def view_summary():
     content, _ = _merged_content("-summary.txt")
     if not content:
         return "暂无摘要", 404
-    return Response(content, mimetype="text/plain; charset=utf-8")
+    return render_template("view.html", title="摘要", content=content)
 
 @app.route("/api/download/transcript")
 def download_transcript():
