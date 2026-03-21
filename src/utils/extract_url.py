@@ -494,6 +494,7 @@ def download_bilibili_wav(
 
     ffmpeg_cmd = [
         "ffmpeg", "-y",
+        "-threads", "2",
         "-i", temp_audio,
         "-ar", "16000",
         "-ac", "1",
