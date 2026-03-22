@@ -41,7 +41,7 @@ from src.utils.merge import merge_files, find_userdata_files  # noqa: E402
 # ---------------------------------------------------------------------------
 # Flask app
 # ---------------------------------------------------------------------------
-APP_VERSION = "v1.0"
+APP_VERSION = "v0.2.0-alpha"
 
 app = Flask(__name__)
 
