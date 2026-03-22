@@ -220,14 +220,16 @@ def _processing_worker(
                                 with _status_lock:
                                     status_messages.append({"type": "progress", "done": done, "total": total_chunks})
                             raw = asr_transcribe(_recognizer, wav_path, on_progress=_asr_progress)
-                            Path(wav_path).unlink(missing_ok=True)
                             # Save raw ASR output to temp before LLM step
+                            # wav_path kept alive until transcript+summary are both written
                             raw_temp = DATA_TEMP / f"{stem}-raw.txt"
                             raw_temp.write_text(raw, encoding="utf-8")
                             _emit("info", f"{bvid}: 原始转录已保存至临时文件")
 
                         if not api_key:
-                            # No API key — leave raw in temp, skip LLM and summary
+                            # No API key — leave raw in temp, delete wav, skip LLM and summary
+                            if wav_path:
+                                Path(wav_path).unlink(missing_ok=True)
                             done_count[0] += 1
                             _emit("info", f"{bvid}: 无 API Key，原始转录保留在临时文件中，跳过 LLM 补全")
                             _emit("success", f"({done_count[0]}/{total}) {bvid} 转录完成（待 LLM 补全）")
@@ -252,6 +254,9 @@ def _processing_worker(
                         else:
                             _emit("info", f"{bvid}: 无 API Key，跳过摘要")
 
+                    # wav deleted here — after both transcript and summary are written
+                    if wav_path:
+                        Path(wav_path).unlink(missing_ok=True)
                     done_count[0] += 1
                     _emit("success", f"({done_count[0]}/{total}) {bvid} 完成")
 
