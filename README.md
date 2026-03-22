@@ -16,8 +16,9 @@ This is a demo project for learning purposes only.
 Download the archive and unarchive the files:
 
 ```bash
-wget -O Bili_Notes-alpha.tar.gz https://codeload.github.com/MapleHe/Bili_Notes/tar.gz/refs/tags/alpha
-tar -zxf Bili_Notes-alpha.tar.gz && mv Bili_Notes-alpha Bili_Notes && rm Bili_Notes-alpha.tar.gz
+curl -o Bili_Notes.tar.gz https://codeload.github.com/MapleHe/Bili_Notes/tar.gz/refs/tags/v0.2.0-alpha
+# or wget -O Bili_Notes.tar.gz https://codeload.github.com/MapleHe/Bili_Notes/tar.gz/refs/tags/v0.2.0-alpha
+tar -zxf Bili_Notes.tar.gz && mv Bili_Notes-0.2.0-alpha Bili_Notes && rm Bili_Notes.tar.gz
 ```
 
 OR use git clone:
