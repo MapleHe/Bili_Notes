@@ -145,14 +145,21 @@ def _processing_worker(
 
                 if ex["transcript"]:
                     _emit("info", f"{bvid}: 文字稿已存在，仅生成摘要")
-                    pipe.put({"bvid": bvid, "wav_path": None, "safe_title": None, "existing": ex})
+                    pipe.put({"bvid": bvid, "wav_path": None, "safe_title": None, "existing": ex, "raw_temp": None})
+                    continue
+
+                # Check for existing raw temp file (transcribed but not yet LLM-completed)
+                raw_temps = sorted(DATA_TEMP.glob(f"{bvid}-*-raw.txt"))
+                if raw_temps:
+                    _emit("info", f"{bvid}: 已有临时转录文件，跳过下载")
+                    pipe.put({"bvid": bvid, "wav_path": None, "safe_title": None, "existing": ex, "raw_temp": raw_temps[0]})
                     continue
 
                 try:
                     _emit("info", f"下载 {bvid}…")
                     r = download_bilibili_wav(bvid, str(DATA_TEMP), cookie or None, False)
                     ex = _check_existing(bvid)
-                    pipe.put({"bvid": bvid, "wav_path": r["wav_path"], "safe_title": r["safe_title"], "existing": ex})
+                    pipe.put({"bvid": bvid, "wav_path": r["wav_path"], "safe_title": r["safe_title"], "existing": ex, "raw_temp": None})
                 except Exception as e:
                     _emit("error", f"{bvid} 下载失败: {e}")
                     pipe.put({"bvid": bvid, "error": True})
@@ -183,11 +190,14 @@ def _processing_worker(
                 wav_path = item.get("wav_path")
                 safe_title = item.get("safe_title")
                 ex = item.get("existing", {}) or {}
+                raw_temp: Path | None = item.get("raw_temp")
 
                 try:
                     # Determine stem for file naming
                     if safe_title:
                         stem = f"{bvid}-{safe_title}"
+                    elif raw_temp:
+                        stem = raw_temp.name.removesuffix("-raw.txt")
                     elif ex.get("transcript"):
                         stem = ex["transcript"].name.removesuffix("-transcript.txt")
                     else:
@@ -198,27 +208,41 @@ def _processing_worker(
 
                     # Transcription
                     if not ex.get("transcript"):
-                        if _recognizer is None:
-                            raise RuntimeError("ASR 模型未就绪")
-                        _emit("info", f"转录 {bvid}…")
-                        def _asr_progress(done, total):
-                            with _status_lock:
-                                status_messages.append({"type": "progress", "done": done, "total": total})
-                        raw = asr_transcribe(_recognizer, wav_path, on_progress=_asr_progress)
-                        Path(wav_path).unlink(missing_ok=True)
-
-                        if api_key:
-                            _emit("info", f"LLM 补全 {bvid}…")
-                            completed = complete_transcription(raw, bvid, api_key, model, base_url)
+                        if raw_temp:
+                            # Reuse existing raw temp, skip download + ASR
+                            raw = raw_temp.read_text(encoding="utf-8")
+                            _emit("info", f"{bvid}: 读取已有临时转录文件")
                         else:
-                            completed = f"## BVID: {bvid}\n\n{raw}"
+                            if _recognizer is None:
+                                raise RuntimeError("ASR 模型未就绪")
+                            _emit("info", f"转录 {bvid}…")
+                            def _asr_progress(done, total_chunks):
+                                with _status_lock:
+                                    status_messages.append({"type": "progress", "done": done, "total": total_chunks})
+                            raw = asr_transcribe(_recognizer, wav_path, on_progress=_asr_progress)
+                            Path(wav_path).unlink(missing_ok=True)
+                            # Save raw ASR output to temp before LLM step
+                            raw_temp = DATA_TEMP / f"{stem}-raw.txt"
+                            raw_temp.write_text(raw, encoding="utf-8")
+                            _emit("info", f"{bvid}: 原始转录已保存至临时文件")
 
+                        if not api_key:
+                            # No API key — leave raw in temp, skip LLM and summary
+                            done_count[0] += 1
+                            _emit("info", f"{bvid}: 无 API Key，原始转录保留在临时文件中，跳过 LLM 补全")
+                            _emit("success", f"({done_count[0]}/{total}) {bvid} 转录完成（待 LLM 补全）")
+                            continue
+
+                        _emit("info", f"LLM 补全 {bvid}…")
+                        completed = complete_transcription(raw, bvid, api_key, model, base_url)
                         t_path.write_text(completed, encoding="utf-8")
+                        # Delete raw temp only after transcript is safely written
+                        raw_temp.unlink(missing_ok=True)
                         _emit("success", f"{bvid} 文字稿已保存")
                     else:
                         completed = t_path.read_text(encoding="utf-8")
 
-                    # Summarization (always if api_key, with default prompt)
+                    # Summarization
                     if not ex.get("summary"):
                         if api_key:
                             _emit("info", f"生成摘要 {bvid}…")
