@@ -33,3 +33,6 @@ models/
 
 # Claude Code local settings (may contain permissions/paths)
 .claude/
+
+# Misc
+agents/Goals/

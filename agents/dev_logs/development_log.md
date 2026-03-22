@@ -53,3 +53,33 @@ Building a Flask-based web application for Bilibili audio download and transcrip
 - Flask SSE for real-time progress: Use `text/event-stream` response with generator
 - Termux compatibility: Use subprocess list form, pathlib for paths, avoid shell features
 - Memory efficiency: Stream download to disk, process in chunks
+
+---
+
+## 2026-03-21 — Plan v1.0: MacBook Air M2 Performance Optimization
+
+### Context
+Administrator wants to deploy on MacBook Air M2 (16GB, 256GB) with at most 1/4 resource usage (4GB RAM, ~2 cores). Current SenseVoice ASR is extremely slow on long audio files on both Termux and ThinkPad T14.
+
+### Root Cause Analysis
+SenseVoice uses attention — processing time grows **quadratically** with audio length. The code loads the entire WAV into memory (`sf.read()`) and processes it in one `decode_stream()` call. A 2-hour video uses ~2.5GB+ RAM and takes very long to process.
+
+### Plan Created
+See `agents/Plans/Plan.v1.0.md` for full details. Summary:
+- Phase 2: Platform-aware thread count (auto-detect cores, limit to 1/4)
+- Phase 1A: Chunk audio into 30s segments, process each independently
+- Phase 3: Pipe ffmpeg output directly to ASR (no temp WAV file)
+- Phase 4: CoreML GPU acceleration on M2 (CPU fallback on ThinkPad/Termux)
+- Phase 5/1B: Deferred (VAD, alternative models)
+
+### Questions & Administrator Decisions
+
+| # | Question | Administrator Decision |
+|---|----------|----------------------|
+| 1 | Should we evaluate Zipformer/Paraformer as alternative models? | SenseVoice accuracy is acceptable. Keep it. Only evaluate alternatives if chunked SenseVoice is still too slow after benchmarking. |
+| 2 | Should we pursue CoreML acceleration on M2? | **Yes**. CoreML on M2, CPU-only fallback on devices without GPU. |
+| 3 | Is verbatim (word-by-word) transcription output needed? | No. Only the final transcription file of the whole audio is needed. |
+| 4 | Is ffmpeg installed via Homebrew on M2? | **Yes**, confirmed. (Includes AudioToolbox by default.) |
+
+### Key Insight
+Chunking SenseVoice into 30s segments should solve the quadratic slowness — each chunk processes independently in ~200ms. This is the highest-impact change with no dependency or model changes required.
