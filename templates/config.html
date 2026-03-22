@@ -50,8 +50,23 @@
       </div>
 
       <div class="field">
-        <label for="cookie">Bilibili Cookie（可选，用于高清/登录内容）</label>
-        <textarea id="cookie" rows="2" placeholder="SESSDATA=xxx; bili_jct=yyy; ..."></textarea>
+        <label for="cookie">Bilibili Cookie（登录后可下载高清 / 会员内容）</label>
+        <textarea id="cookie" rows="4"
+          placeholder="SESSDATA=abc123%2C1234567890%2Cabc123; bili_jct=abcdef1234567890abcdef1234567890; DedeUserID=12345678; DedeUserID__ckMd5=abcdef1234; buvid3=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXXinfoc; buvid4=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXXinfoc; sid=xxxxxxxx"></textarea>
+        <p class="field-hint">
+          <strong>如何获取：</strong>浏览器登录 bilibili.com →
+          打开开发者工具（F12）→ Application → Cookies →
+          选择 <code>https://www.bilibili.com</code>，
+          按顺序复制以下字段的值并拼接：<br>
+          <code>SESSDATA</code>（必须）·
+          <code>bili_jct</code>（必须）·
+          <code>DedeUserID</code>（必须）·
+          <code>DedeUserID__ckMd5</code>（推荐）·
+          <code>buvid3</code>（推荐）·
+          <code>buvid4</code>（推荐）·
+          <code>sid</code>（可选）<br>
+          格式：<code>名称=值; 名称=值; ...</code>，各字段以 <code>; </code> 分隔，粘贴整行即可。
+        </p>
       </div>
 
       <div class="field">
