@@ -198,6 +198,7 @@ def load_recognizer(model_type: str = MODEL_TYPE) -> sherpa_onnx.OfflineRecogniz
     if the installed sherpa-onnx version does not support the provider parameter.
     """
     provider = "coreml" if _use_coreml() else "cpu"
+    print(f"[ASR] 推理后端: {provider}（模型类型: {model_type}，线程数: {NUM_THREADS}）")
     kwargs = _build_recognizer_kwargs(model_type, provider)
 
     try:
