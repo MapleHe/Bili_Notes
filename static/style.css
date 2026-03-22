@@ -284,6 +284,52 @@ body {
 .log-error   { color: #f85149; }
 .log-warning { color: #e3b341; }
 
+/* ── Progress bar (inside log frame) ────────────────────── */
+.log-progress-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  color: #79c0ff;
+}
+
+.prog-label {
+  font-size: 0.78rem;
+  white-space: nowrap;
+  color: #79c0ff;
+}
+
+.prog-track {
+  flex: 1;
+  height: 6px;
+  background: #2d3250;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.prog-fill {
+  height: 100%;
+  background: #3f6ad8;
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
+
+.prog-text {
+  font-size: 0.78rem;
+  white-space: nowrap;
+  color: #c9d1d9;
+  min-width: 80px;
+  text-align: right;
+}
+
+/* ── Page footer ─────────────────────────────────────────── */
+.page-footer {
+  text-align: center;
+  padding: 12px;
+  font-size: 0.78rem;
+  color: #999;
+}
+
 /* ── Scrollbar styling (Webkit) ──────────────────────────── */
 .status-log::-webkit-scrollbar {
   width: 6px;

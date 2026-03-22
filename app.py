@@ -41,6 +41,8 @@ from src.utils.merge import merge_files, find_userdata_files  # noqa: E402
 # ---------------------------------------------------------------------------
 # Flask app
 # ---------------------------------------------------------------------------
+APP_VERSION = "v1.0"
+
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
@@ -199,7 +201,10 @@ def _processing_worker(
                         if _recognizer is None:
                             raise RuntimeError("ASR 模型未就绪")
                         _emit("info", f"转录 {bvid}…")
-                        raw = asr_transcribe(_recognizer, wav_path)
+                        def _asr_progress(done, total):
+                            with _status_lock:
+                                status_messages.append({"type": "progress", "done": done, "total": total})
+                        raw = asr_transcribe(_recognizer, wav_path, on_progress=_asr_progress)
                         Path(wav_path).unlink(missing_ok=True)
 
                         if api_key:
@@ -250,7 +255,7 @@ def _processing_worker(
 
 @app.route("/")
 def index():
-    return render_template("index.html", providers=PROVIDERS)
+    return render_template("index.html", providers=PROVIDERS, version=APP_VERSION)
 
 @app.route("/config")
 def config_page():

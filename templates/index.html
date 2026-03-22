@@ -52,6 +52,8 @@
 
   </main>
 
+  <footer class="page-footer">Bili_Notes {{ version }}</footer>
+
   <script>
   // ─────────────────────────────────────────────────────────────────────────
   // Helpers
@@ -65,6 +67,30 @@
     line.textContent = text;
     log.appendChild(line);
     log.scrollTop = log.scrollHeight;
+  }
+
+  function updateProgress(done, total) {
+    const log = $('status-log');
+    let el = $('log-progress');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'log-progress';
+      el.className = 'log-line log-progress-bar';
+      log.appendChild(el);
+    }
+    const pct = total ? Math.round(done / total * 100) : null;
+    const label = total ? `${done} / ${total} (${pct}%)` : `${done} 段`;
+    const fill = pct !== null ? pct : 0;
+    el.innerHTML =
+      `<span class="prog-label">▶ 转录</span>` +
+      `<div class="prog-track"><div class="prog-fill" style="width:${fill}%"></div></div>` +
+      `<span class="prog-text">${label}</span>`;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function clearProgress() {
+    const el = $('log-progress');
+    if (el) el.remove();
   }
 
   function confirmAction(message, url, successMsg) {
@@ -89,10 +115,15 @@
     eventSource.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
-        appendLog(msg.type || 'info', msg.text || '');
-        if ((msg.type === 'success' || msg.type === 'error') &&
-            (msg.text === '所有任务完成' || msg.text.startsWith('所有任务'))) {
-          setTimeout(() => { if (eventSource) { eventSource.close(); eventSource = null; } }, 2000);
+        if (msg.type === 'progress') {
+          updateProgress(msg.done, msg.total);
+        } else {
+          clearProgress();
+          appendLog(msg.type || 'info', msg.text || '');
+          if ((msg.type === 'success' || msg.type === 'error') &&
+              (msg.text === '所有任务完成' || msg.text.startsWith('所有任务'))) {
+            setTimeout(() => { if (eventSource) { eventSource.close(); eventSource = null; } }, 2000);
+          }
         }
       } catch (_) {}
     };
@@ -173,6 +204,7 @@
   });
   $('btn-clear-log').addEventListener('click', () => {
     $('status-log').innerHTML = '';
+    clearProgress();
   });
 
   $('btn-show-bvids').addEventListener('click', () => {

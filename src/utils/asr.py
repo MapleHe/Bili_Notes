@@ -8,6 +8,7 @@
 
 import sys
 import os
+import math
 import platform
 import subprocess
 import argparse
@@ -128,6 +129,21 @@ def _download_with_progress(url: str, dest: Path) -> None:
     urllib.request.urlretrieve(url, dest, reporthook=_report)
 
 
+def _probe_duration(input_path: str) -> float | None:
+    """Return audio duration in seconds via ffprobe, or None on failure."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        input_path,
+    ]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return float(out.stdout.strip())
+    except Exception:
+        return None
+
+
 def _use_coreml() -> bool:
     """Return True if running on Apple Silicon where CoreML may accelerate inference."""
     return platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -203,16 +219,20 @@ def transcribe_chunked(
     recognizer: sherpa_onnx.OfflineRecognizer,
     wav_path: str,
     chunk_duration_sec: int = 30,
+    on_progress=None,
 ) -> str:
     """Read a 16kHz mono WAV file in chunks and transcribe each chunk.
 
     Peak memory usage: ~model size + one chunk buffer (~960 KB for 30s at 16kHz).
+    on_progress: optional callable(chunks_done: int, total_chunks: int)
     """
     texts = []
     with sf.SoundFile(wav_path) as f:
         if f.samplerate != 16000:
             raise ValueError(f"采样率应为 16000，实际为 {f.samplerate}，请重新转码")
         chunk_size = chunk_duration_sec * f.samplerate
+        total_chunks = max(1, math.ceil(len(f) / chunk_size))
+        chunks_done = 0
         while True:
             data = f.read(chunk_size, dtype="float32")
             if len(data) == 0:
@@ -223,6 +243,9 @@ def transcribe_chunked(
             text = stream.result.text.strip()
             if text:
                 texts.append(text)
+            chunks_done += 1
+            if on_progress:
+                on_progress(chunks_done, total_chunks)
     return " ".join(texts)
 
 
@@ -230,17 +253,22 @@ def transcribe_from_audio(
     recognizer: sherpa_onnx.OfflineRecognizer,
     input_path: str,
     chunk_duration_sec: int = 30,
+    on_progress=None,
 ) -> str:
     """Convert audio to PCM via ffmpeg pipe and transcribe in chunks.
 
     Accepts any ffmpeg-compatible audio format (WAV, M4A, MP3, etc.).
     No temporary file is written to disk — ffmpeg output is piped directly to ASR.
     Peak memory: ~model size + one chunk buffer (~960 KB for 30s at 16kHz).
+    on_progress: optional callable(chunks_done: int, total_chunks: int | None)
     """
     sample_rate = 16000
     chunk_samples = chunk_duration_sec * sample_rate
     bytes_per_sample = 2  # pcm_s16le = 16-bit signed little-endian
     chunk_bytes = chunk_samples * bytes_per_sample
+
+    duration = _probe_duration(input_path)
+    total_chunks = math.ceil(duration / chunk_duration_sec) if duration else None
 
     cmd = [
         "ffmpeg", "-y",
@@ -254,6 +282,7 @@ def transcribe_from_audio(
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     texts = []
+    chunks_done = 0
 
     try:
         while True:
@@ -267,6 +296,9 @@ def transcribe_from_audio(
             text = stream.result.text.strip()
             if text:
                 texts.append(text)
+            chunks_done += 1
+            if on_progress:
+                on_progress(chunks_done, total_chunks)
     finally:
         proc.stdout.close()
         proc.wait()
@@ -277,9 +309,9 @@ def transcribe_from_audio(
     return " ".join(texts)
 
 
-def transcribe(recognizer: sherpa_onnx.OfflineRecognizer, wav_path: str) -> str:
+def transcribe(recognizer: sherpa_onnx.OfflineRecognizer, wav_path: str, on_progress=None) -> str:
     """Read a WAV file and return the transcribed text (chunked to limit memory)."""
-    return transcribe_chunked(recognizer, wav_path)
+    return transcribe_chunked(recognizer, wav_path, on_progress=on_progress)
 
 
 def transcribe_audio(input_path: str) -> str:
