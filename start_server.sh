@@ -14,17 +14,19 @@ if command -v uv >/dev/null 2>&1 && [ -d ".venv" ]; then
     PIP_CMD="uv pip install"
     # Activate the uv-managed virtual environment
     source .venv/bin/activate
-elif [ -d ".venv" ]; then
+elif command -v uv >/dev/null 2>&1 ; then
+    uv venv
     source .venv/bin/activate
-    PIP_CMD="pip install"
-elif command -v pip3 >/dev/null 2>&1; then
-    PIP_CMD="pip3 install"
-else
+    PIP_CMD="uv pip install"
+else command -v python3 >/dev/null 2>&1 ; then
     PIP_CMD="python3 -m pip install"
+else
+    echo "No available python3 environment."
+    exit 1
 fi
 
 if [ -f "requirements.txt" ]; then
-    echo "Checking Python dependencies..."
+    echo "Setup Python dependencies..."
     $PIP_CMD -r requirements.txt --quiet
 fi
 
