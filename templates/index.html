@@ -42,6 +42,11 @@
         <button class="btn btn-secondary" id="btn-show-bvids">查看已有 BV 列表</button>
       </div>
 
+      <div class="btn-group">
+        <button class="btn" id="btn-dl-selected-transcript">下载选中文字稿</button>
+        <button class="btn" id="btn-dl-selected-summary">下载选中总结</button>
+      </div>
+
       <div class="btn-group btn-group-danger">
         <button class="btn btn-danger" id="btn-clear-temp">清理临时文件</button>
         <button class="btn btn-danger" id="btn-clear-all">清除所有文件</button>
@@ -213,14 +218,40 @@
     fetch('/api/bvids')
       .then(r => r.json())
       .then(d => {
+        box.innerHTML = '';
         if (!d.bvids.length) {
           box.textContent = '（暂无已处理的 BV ID）';
         } else {
-          box.textContent = d.bvids.join('\n');
+          d.bvids.forEach(item => {
+            const label = document.createElement('label');
+            label.className = 'bvid-item';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'bvid-checkbox';
+            cb.value = item.bvid;
+            label.appendChild(cb);
+            label.appendChild(document.createTextNode(' ' + item.bvid + ' — ' + item.title));
+            box.appendChild(label);
+          });
         }
         box.style.display = 'block';
       })
       .catch(e => appendLog('error', '获取 BV 列表失败：' + e));
+  });
+
+  function getSelectedBvids() {
+    return Array.from(document.querySelectorAll('.bvid-checkbox:checked')).map(cb => cb.value);
+  }
+
+  $('btn-dl-selected-transcript').addEventListener('click', () => {
+    const sel = getSelectedBvids();
+    if (!sel.length) { appendLog('error', '请先在 BV 列表中勾选至少一个'); return; }
+    window.location.href = '/api/download/transcript?bvids=' + encodeURIComponent(sel.join(','));
+  });
+  $('btn-dl-selected-summary').addEventListener('click', () => {
+    const sel = getSelectedBvids();
+    if (!sel.length) { appendLog('error', '请先在 BV 列表中勾选至少一个'); return; }
+    window.location.href = '/api/download/summary?bvids=' + encodeURIComponent(sel.join(','));
   });
   </script>
 

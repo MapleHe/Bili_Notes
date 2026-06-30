@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -99,18 +99,29 @@ def _check_existing(bvid: str) -> dict:
         "summary": summaries[0] if summaries else None,
     }
 
-def _merged_content(suffix: str) -> tuple[str, list[str]]:
-    """Return merged content and list of missing BVIDs."""
+def _merged_content(suffix: str, bvid_filter: list[str] | None = None) -> tuple[str, list[str], list[str]]:
+    """Return merged content, list of missing BVIDs, and the matched file paths."""
     paths = find_userdata_files(str(DATA_USERDATA), suffix)
+    if bvid_filter:
+        keep = set(bvid_filter)
+        paths = [p for p in paths if Path(p).name.split("-")[0] in keep]
     if not paths:
-        return "", []
+        return "", [], []
     done_bvids = {Path(p).name.split("-")[0] for p in paths}
-    missing = [b for b in _requested_bvids if b not in done_bvids]
+    wanted = bvid_filter if bvid_filter else _requested_bvids
+    missing = [b for b in wanted if b not in done_bvids]
     content = merge_files(paths)
     if missing:
         note = "# 注意：以下 BV ID 尚未完成：" + "、".join(missing) + "\n\n---\n\n"
         content = note + content
-    return content, missing
+    return content, missing, paths
+
+def _parse_bvids_param() -> list[str] | None:
+    """Parse the optional comma-separated ?bvids= query param."""
+    raw = request.args.get("bvids", "").strip()
+    if not raw:
+        return None
+    return [b.strip() for b in raw.split(",") if b.strip()]
 
 # ---------------------------------------------------------------------------
 # Background processing pipeline
@@ -330,7 +341,7 @@ def start_process():
             return jsonify({"ok": False, "error": "未提供 BV ID"}), 400
 
         api_key = body.get("api_key", "").strip()
-        model = body.get("model", "deepseek-chat").strip()
+        model = body.get("model", "deepseek-v4-flash").strip()
         base_url = body.get("base_url", "https://api.deepseek.com/v1").strip()
         summary_prompt = body.get("summary_prompt", "").strip()
         cookie = body.get("cookie", "").strip()
@@ -378,10 +389,17 @@ def status_stream():
 
 @app.route("/api/bvids")
 def list_bvids():
-    """Return unique BV IDs that have existing transcript or summary files."""
-    paths = find_userdata_files(str(DATA_USERDATA), "-transcript.txt") + \
-            find_userdata_files(str(DATA_USERDATA), "-summary.txt")
-    bvids = sorted({Path(p).name.split("-")[0] for p in paths})
+    """Return BV IDs with title and which content types exist, for selection UI."""
+    info: dict[str, dict] = {}
+    for suffix, kind in (("-transcript.txt", "has_transcript"), ("-summary.txt", "has_summary")):
+        for p in find_userdata_files(str(DATA_USERDATA), suffix):
+            stem = Path(p).name[: -len(suffix)]
+            bvid, _, title = stem.partition("-")
+            entry = info.setdefault(
+                bvid, {"bvid": bvid, "title": title, "has_transcript": False, "has_summary": False}
+            )
+            entry[kind] = True
+    bvids = [info[b] for b in sorted(info)]
     return jsonify({"bvids": bvids})
 
 
@@ -400,43 +418,47 @@ def list_files():
 
 @app.route("/api/view/transcript")
 def view_transcript():
-    content, _ = _merged_content("-transcript.txt")
+    content, _, _ = _merged_content("-transcript.txt", _parse_bvids_param())
     if not content:
         return "暂无文字稿", 404
     return render_template("view.html", title="文字稿", content=content)
 
 @app.route("/api/view/summary")
 def view_summary():
-    content, _ = _merged_content("-summary.txt")
+    content, _, _ = _merged_content("-summary.txt", _parse_bvids_param())
     if not content:
         return "暂无摘要", 404
     return render_template("view.html", title="摘要", content=content)
 
 @app.route("/api/download/transcript")
 def download_transcript():
-    content, _ = _merged_content("-transcript.txt")
+    bvid_filter = _parse_bvids_param()
+    content, _, paths = _merged_content("-transcript.txt", bvid_filter)
     if not content:
         return jsonify({"error": "暂无文字稿"}), 404
+    download_name = Path(paths[0]).name if bvid_filter and len(paths) == 1 else "merged-transcript.txt"
     tmp = DATA_TEMP / "merged-transcript.txt"
     tmp.write_text(content, encoding="utf-8")
     return send_file(
         str(tmp),
         as_attachment=True,
-        download_name="merged-transcript.txt",
+        download_name=download_name,
         mimetype="text/plain",
     )
 
 @app.route("/api/download/summary")
 def download_summary():
-    content, _ = _merged_content("-summary.txt")
+    bvid_filter = _parse_bvids_param()
+    content, _, paths = _merged_content("-summary.txt", bvid_filter)
     if not content:
         return jsonify({"error": "暂无摘要"}), 404
+    download_name = Path(paths[0]).name if bvid_filter and len(paths) == 1 else "merged-summary.txt"
     tmp = DATA_TEMP / "merged-summary.txt"
     tmp.write_text(content, encoding="utf-8")
     return send_file(
         str(tmp),
         as_attachment=True,
-        download_name="merged-summary.txt",
+        download_name=download_name,
         mimetype="text/plain",
     )
 
@@ -473,6 +495,10 @@ def clear_all():
         except OSError:
             pass
     return jsonify({"ok": True, "cleared": cleared})
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'static'), 'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 # ---------------------------------------------------------------------------
 # Entry point

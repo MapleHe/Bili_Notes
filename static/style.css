@@ -290,6 +290,15 @@ body {
   overflow-y: auto;
 }
 
+.bvid-list label.bvid-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  white-space: normal;
+}
+
 .log-line {
   padding: 1px 0;
 }

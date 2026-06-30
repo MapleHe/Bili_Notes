@@ -13,15 +13,15 @@ from openai import OpenAI
 
 # Constants
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = "deepseek-v4-flash"
 
 # Provider configurations
 PROVIDERS = {
     "deepseek": {
         "name": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "default_model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-flash-thinking"],
     },
     "openai": {
         "name": "OpenAI",
@@ -52,7 +52,7 @@ def complete_transcription(
         text: The original ASR transcription text
         bvid: Bilibili video ID
         api_key: API key for the LLM provider
-        model: Model name to use (default: deepseek-chat)
+        model: Model name to use (default: deepseek-v4-flash)
         base_url: API base URL (default: DeepSeek)
 
     Returns:
@@ -69,13 +69,18 @@ def complete_transcription(
         "直接输出校正后的文字，不要添加任何解释或前缀。"
     )
 
+    thinking = model.endswith("-thinking")
+    actual_model = model[: -len("-thinking")] if thinking else model
+    extra: dict = {"extra_body": {"thinking": {"type": "enabled"}}} if thinking else {}
+
     try:
         response = client.chat.completions.create(
-            model=model,
+            model=actual_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
+            **extra,
         )
         completed_text = response.choices[0].message.content.strip()
         return f"## BVID: {bvid}\n\n{completed_text}"
@@ -99,7 +104,7 @@ def summarize_text(
         bvid: Bilibili video ID
         summary_prompt: User-defined summarization prompt
         api_key: API key for the LLM provider
-        model: Model name to use (default: deepseek-chat)
+        model: Model name to use (default: deepseek-v4-flash)
         base_url: API base URL (default: DeepSeek)
 
     Returns:
@@ -113,13 +118,18 @@ def summarize_text(
     system_prompt = "你是一个专业的内容总结助手。请根据用户的要求对提供的文字进行总结。"
     user_message = f"{summary_prompt}\n\n---\n\n{text}"
 
+    thinking = model.endswith("-thinking")
+    actual_model = model[: -len("-thinking")] if thinking else model
+    extra: dict = {"extra_body": {"thinking": {"type": "enabled"}}} if thinking else {}
+
     try:
         response = client.chat.completions.create(
-            model=model,
+            model=actual_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
+            **extra,
         )
         summary = response.choices[0].message.content.strip()
         return f"## BVID: {bvid}\n\n{summary}"
@@ -144,7 +154,7 @@ def get_available_models(base_url: str, api_key: str) -> list[str]:
         return [model.id for model in models.data]
     except Exception:
         # Return default models on any error
-        return ["deepseek-chat", "deepseek-reasoner"]
+        return ["deepseek-v4-flash", "deepseek-v4-flash-thinking"]
 
 
 def main():

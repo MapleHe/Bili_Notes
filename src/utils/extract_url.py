@@ -1,9 +1,11 @@
 
 import json
 import os
+import random
 import re
 import subprocess
 import sys
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -112,13 +114,13 @@ def _pick_preferred_url(all_urls: List[str], prefer_url_type: Optional[str]) -> 
 
 
 def _build_session(page_url: str, cookie: Optional[str | dict]) -> cffi_requests.Session:
-    sess = cffi_requests.Session(impersonate="chrome110")
+    sess = cffi_requests.Session(impersonate="chrome124")
     sess.headers.update(
         {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/110.0.0.0 Safari/537.36"
+                "Chrome/124.0.0.0 Safari/537.36"
             ),
             "Referer": page_url,
             "Origin": "https://www.bilibili.com",
@@ -248,6 +250,9 @@ def extract_bilibili_dash_audio_url(
     sess = _build_session(page_url, cookie)
     meta = _fetch_page_meta(sess, page_url, timeout=timeout)
 
+    # Brief pause between page fetch and API call to reduce request-burst detection.
+    time.sleep(random.uniform(0.5, 2.0))
+
     params = {
         "avid": meta["aid"],
         "cid": meta["cid"],
@@ -335,7 +340,12 @@ def extract_bilibili_dash_audio_url(
         "bvid": meta["bvid"],
         "title": meta["title"],
         "raw_playurl": playurl,
+        "_session": sess,
     }
+
+
+_DOWNLOAD_MAX_RETRIES = 3
+_DOWNLOAD_RETRY_DELAY = 5  # seconds between retries
 
 
 def download_audio(
@@ -346,9 +356,11 @@ def download_audio(
     chunk_size: int = 1024 * 1024,
     timeout: int = 60,
     show_progress: bool = True,
+    sess: Optional[cffi_requests.Session] = None,
+    backup_urls: Optional[List[str]] = None,
 ) -> str:
     """
-    根据提取到的音频 URL 下载文件并保存到本地。
+    根据提取到的音频 URL 下载文件并保存到本地。支持自动重试和备用 URL 切换。
 
     参数：
         download_url  : 由 extract_bilibili_dash_audio_url 返回的 download_url
@@ -358,68 +370,92 @@ def download_audio(
         chunk_size    : 流式读取的块大小（字节），默认 1 MB
         timeout       : 请求超时秒数，默认 60 秒
         show_progress : 是否在终端显示下载进度条，默认 True
+        sess          : 可选的已有 Session（用于与 metadata 请求共享会话）
+        backup_urls   : 主 URL 失败时依次尝试的备用 CDN 地址列表
 
     返回：
         实际写入的文件路径（与 filename 相同）
-
-    异常：
-        requests.HTTPError  : HTTP 状态码非 2xx
-        OSError             : 文件写入失败
     """
-    sess = _build_session(page_url, cookie)
-    # Range 请求头：从头开始下载，同时让服务端返回 Content-Length
-    sess.headers.update({"Range": "bytes=0-"})
-
-    resp = sess.get(download_url, stream=True, timeout=timeout)
-    # 206 Partial Content 也是正常响应
-    if resp.status_code not in (200, 206):
-        resp.raise_for_status()
-
-    # 尝试从 Content-Range 或 Content-Length 获取总大小
-    total: Optional[int] = None
-    content_range = resp.headers.get("Content-Range", "")  # e.g. "bytes 0-1234/5678"
-    if content_range:
-        m = re.search(r"/(\d+)$", content_range)
-        if m:
-            total = int(m.group(1))
-    if total is None:
-        cl = resp.headers.get("Content-Length")
-        if cl and cl.isdigit():
-            total = int(cl)
-
-    downloaded = 0
+    urls_to_try = [download_url] + [u for u in (backup_urls or []) if u != download_url]
 
     def _fmt(n: int) -> str:
-        """将字节数格式化为人类可读的字符串。"""
         for unit in ("B", "KB", "MB", "GB"):
             if n < 1024:
                 return f"{n:.1f} {unit}"
             n /= 1024
         return f"{n:.1f} TB"
 
-    with open(filename, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=chunk_size):
-            if not chunk:
-                continue
-            f.write(chunk)
-            downloaded += len(chunk)
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, _DOWNLOAD_MAX_RETRIES + 1):
+        # Cycle through available URLs: primary first, then backups, then repeat.
+        url = urls_to_try[(attempt - 1) % len(urls_to_try)]
+        # Build a fresh session on each retry to clear any stale connection state.
+        current_sess = sess if attempt == 1 else _build_session(page_url, cookie)
+        try:
+            if attempt > 1 and show_progress:
+                url_label = "备用地址" if (attempt - 1) < len(urls_to_try) else "重试主地址"
+                print(f"\n  第 {attempt} 次尝试（{url_label}），等待 {_DOWNLOAD_RETRY_DELAY} 秒…")
+                time.sleep(_DOWNLOAD_RETRY_DELAY)
+
+            # Range: bytes=0- triggers 206 + Content-Range header with total size.
+            resp = current_sess.get(
+                url,
+                stream=True,
+                timeout=timeout,
+                headers={"Range": "bytes=0-"},
+            )
+            if resp.status_code not in (200, 206):
+                resp.raise_for_status()
+
+            total: Optional[int] = None
+            content_range = resp.headers.get("Content-Range", "")
+            if content_range:
+                m = re.search(r"/(\d+)$", content_range)
+                if m:
+                    total = int(m.group(1))
+            if total is None:
+                cl = resp.headers.get("Content-Length")
+                if cl and cl.isdigit():
+                    total = int(cl)
+
+            downloaded = 0
+            with open(filename, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if show_progress:
+                        if total:
+                            pct = downloaded / total * 100
+                            filled = int(30 * downloaded / total)
+                            bar = "█" * filled + "░" * (30 - filled)
+                            print(
+                                f"\r  [{bar}] {pct:5.1f}%  "
+                                f"{_fmt(downloaded)} / {_fmt(total)}   ",
+                                end="",
+                                flush=True,
+                            )
+                        else:
+                            print(f"\r  已下载 {_fmt(downloaded)} ...", end="", flush=True)
+
             if show_progress:
-                if total:
-                    pct = downloaded / total * 100
-                    bar_len = 30
-                    filled = int(bar_len * downloaded / total)
-                    bar = "█" * filled + "░" * (bar_len - filled)
-                    print(
-                        f"\r  [{bar}] {pct:5.1f}%  "
-                        f"{_fmt(downloaded)} / {_fmt(total)}   ",
-                        end="",
-                        flush=True,
-                    )
-                else:
-                    print(f"\r  已下载 {_fmt(downloaded)} ...", end="", flush=True)
-    if show_progress:
-        print(f"\r  下载完成：{filename} ({_fmt(downloaded)}){'':30}")
-    return filename
+                print(f"\r  下载完成：{filename} ({_fmt(downloaded)}){'':30}")
+            return filename
+
+        except Exception as exc:
+            last_exc = exc
+            try:
+                if os.path.exists(filename):
+                    os.remove(filename)
+            except OSError:
+                pass
+            if show_progress and attempt < _DOWNLOAD_MAX_RETRIES:
+                print(f"\n  下载出错（第 {attempt} 次）：{exc}")
+
+    raise RuntimeError(
+        f"下载失败（已重试 {_DOWNLOAD_MAX_RETRIES} 次）：{last_exc}"
+    )
 
 
 def download_bilibili_wav(
@@ -481,12 +517,19 @@ def download_bilibili_wav(
         print(f"标题：{title}")
         print(f"开始下载音频到临时文件：{temp_audio}")
 
+    # Reuse the same session to maintain CDN session continuity.
+    # Also add a short random pause before download to avoid burst detection.
+    shared_sess = info.get("_session")
+    time.sleep(random.uniform(1.0, 3.0))
+
     download_audio(
         download_url=info["download_url"],
         filename=temp_audio,
         page_url=page_url,
         cookie=cookie,
         show_progress=show_progress,
+        sess=shared_sess,
+        backup_urls=[u for u in info.get("all_urls", []) if u != info["download_url"]],
     )
 
     if show_progress:
